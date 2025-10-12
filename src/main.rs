@@ -5,7 +5,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Card Renderer".to_string(),
+                title: "Cardigan".to_string(),
                 resolution: (1280, 720).into(),
                 ..default()
             }),
@@ -157,7 +157,7 @@ fn setup_menu(mut commands: Commands) {
                         TextColor(Color::srgb(0.9, 0.9, 0.95)),
                     ));
                 });
-            
+
             // Options button
             parent
                 .spawn((
@@ -185,7 +185,7 @@ fn setup_menu(mut commands: Commands) {
                         TextColor(Color::srgb(0.9, 0.9, 0.95)),
                     ));
                 });
-            
+
             // Exit button
             parent
                 .spawn((
