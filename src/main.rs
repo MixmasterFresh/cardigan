@@ -1,5 +1,16 @@
 use bevy::prelude::*;
-use bevy::app::AppExit;
+
+mod startup;
+mod menu;
+mod options;
+mod pause;
+mod gameplay;
+
+use startup::*;
+use menu::*;
+use options::*;
+use pause::*;
+use gameplay::*;
 
 fn main() {
     App::new()
@@ -35,7 +46,7 @@ fn main() {
 
 // Game states
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
-enum GameState {
+pub enum GameState {
     #[default]
     Menu,
     Playing,
