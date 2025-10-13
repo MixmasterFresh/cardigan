@@ -2,6 +2,20 @@ use bevy::prelude::*;
 use crate::GameState;
 use crate::gameplay::GameEntity;
 
+// Plugin initializer for pause systems
+pub fn init_pause_systems(app: &mut App) {
+    app.add_systems(OnEnter(GameState::Paused), setup_pause_menu)
+        .add_systems(
+            OnExit(GameState::Paused),
+            (cleanup_pause_menu, cleanup_game_on_menu_return),
+        )
+        .add_systems(
+            Update,
+            (pause_button_system, pause_button_interaction, handle_pause_input)
+                .run_if(in_state(GameState::Paused)),
+        );
+}
+
 // Marker component for pause menu entities
 #[derive(Component)]
 pub struct PauseEntity;

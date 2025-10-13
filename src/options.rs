@@ -1,6 +1,17 @@
 use bevy::prelude::*;
 use crate::GameState;
 
+// Plugin initializer for options systems
+pub fn init_options_systems(app: &mut App) {
+    app.add_systems(OnEnter(GameState::Options), setup_options)
+        .add_systems(OnExit(GameState::Options), cleanup_options)
+        .add_systems(
+            Update,
+            (options_button_system, options_button_interaction)
+                .run_if(in_state(GameState::Options)),
+        );
+}
+
 // Marker component for options entities
 #[derive(Component)]
 pub struct OptionsEntity;

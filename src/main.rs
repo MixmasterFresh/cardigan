@@ -13,8 +13,9 @@ use pause::*;
 use gameplay::*;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+    let mut app = App::new();
+
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Cardigan".to_string(),
                 resolution: (1280, 720).into(),
@@ -27,21 +28,16 @@ fn main() {
             hover_scale: 1.3,
             animation_speed: 5.0,
         })
-        .init_state::<GameState>()
-        .add_systems(Startup, setup_camera)
-        .add_systems(OnEnter(GameState::Menu), setup_menu)
-        .add_systems(OnExit(GameState::Menu), cleanup_menu)
-        .add_systems(Update, (menu_button_system, menu_button_interaction).run_if(in_state(GameState::Menu)))
-        .add_systems(OnEnter(GameState::Playing), setup_game)
-        .add_systems(OnExit(GameState::Playing), cleanup_game)
-        .add_systems(Update, (detect_card_hover, animate_card_scale, handle_pause_input).run_if(in_state(GameState::Playing)))
-        .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
-        .add_systems(OnExit(GameState::Paused), (cleanup_pause_menu, cleanup_game_on_menu_return))
-        .add_systems(Update, (pause_button_system, pause_button_interaction, handle_pause_input).run_if(in_state(GameState::Paused)))
-        .add_systems(OnEnter(GameState::Options), setup_options)
-        .add_systems(OnExit(GameState::Options), cleanup_options)
-        .add_systems(Update, (options_button_system, options_button_interaction).run_if(in_state(GameState::Options)))
-        .run();
+        .init_state::<GameState>();
+
+    // Initialize systems from each module
+    init_startup_systems(&mut app);
+    init_menu_systems(&mut app);
+    init_options_systems(&mut app);
+    init_pause_systems(&mut app);
+    init_gameplay_systems(&mut app);
+
+    app.run();
 }
 
 // Game states

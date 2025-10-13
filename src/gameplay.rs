@@ -1,4 +1,17 @@
 use bevy::prelude::*;
+use crate::GameState;
+use crate::pause::handle_pause_input;
+
+// Plugin initializer for gameplay systems
+pub fn init_gameplay_systems(app: &mut App) {
+    app.add_systems(OnEnter(GameState::Playing), setup_game)
+        .add_systems(OnExit(GameState::Playing), cleanup_game)
+        .add_systems(
+            Update,
+            (detect_card_hover, animate_card_scale, handle_pause_input)
+                .run_if(in_state(GameState::Playing)),
+        );
+}
 
 // Component to mark entities as cards
 #[derive(Component)]

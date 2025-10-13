@@ -2,6 +2,16 @@ use bevy::prelude::*;
 use bevy::app::AppExit;
 use crate::GameState;
 
+// Plugin initializer for menu systems
+pub fn init_menu_systems(app: &mut App) {
+    app.add_systems(OnEnter(GameState::Menu), setup_menu)
+        .add_systems(OnExit(GameState::Menu), cleanup_menu)
+        .add_systems(
+            Update,
+            (menu_button_system, menu_button_interaction).run_if(in_state(GameState::Menu)),
+        );
+}
+
 // Marker component for menu entities
 #[derive(Component)]
 pub struct MenuEntity;
@@ -71,7 +81,7 @@ pub fn setup_menu(mut commands: Commands) {
                         TextColor(Color::srgb(0.9, 0.9, 0.95)),
                     ));
                 });
-            
+
             // Options button
             parent
                 .spawn((
@@ -99,7 +109,7 @@ pub fn setup_menu(mut commands: Commands) {
                         TextColor(Color::srgb(0.9, 0.9, 0.95)),
                     ));
                 });
-            
+
             // Exit button
             parent
                 .spawn((
