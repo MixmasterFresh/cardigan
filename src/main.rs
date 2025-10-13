@@ -49,3 +49,25 @@ pub enum GameState {
     Paused,
     Options,
 }
+
+// Card configuration resource
+#[derive(Resource)]
+pub struct CardConfig {
+    pub hover_scale: f32,
+    pub animation_speed: f32,
+}
+
+// Card data structure
+#[derive(Clone, Debug)]
+pub struct CardData {
+    pub name: String,
+    // Future fields can be added here: cost, effect, image, etc.
+}
+
+impl CardData {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+        }
+    }
+}

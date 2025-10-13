@@ -1,123 +1,168 @@
 use bevy::prelude::*;
-use crate::GameState;
-use crate::pause::handle_pause_input;
+use crate::{GameState, CardConfig, CardData};
 
 // Plugin initializer for gameplay systems
 pub fn init_gameplay_systems(app: &mut App) {
-    app.add_systems(OnEnter(GameState::Playing), setup_game)
-        .add_systems(OnExit(GameState::Playing), cleanup_game)
+    app.add_systems(OnEnter(GameState::Playing), setup_gameplay)
+        .add_systems(OnExit(GameState::Playing), cleanup_gameplay)
         .add_systems(
             Update,
-            (detect_card_hover, animate_card_scale, handle_pause_input)
-                .run_if(in_state(GameState::Playing)),
+            (
+                card_hover_system,
+                card_animation_system,
+            )
+            .run_if(in_state(GameState::Playing)),
         );
-}
-
-// Component to mark entities as cards
-#[derive(Component)]
-pub struct Card {
-    pub base_scale: Vec3,
-    pub target_scale: Vec3,
-    pub size: Vec2,
-}
-
-// Resource for card configuration
-#[derive(Resource)]
-pub struct CardConfig {
-    pub hover_scale: f32,
-    pub animation_speed: f32,
 }
 
 // Marker component for game entities
 #[derive(Component)]
 pub struct GameEntity;
 
-// Setup game (spawn the card)
-pub fn setup_game(mut commands: Commands) {
-    // Card dimensions
-    let card_width = 200.0;
-    let card_height = 300.0;
-    let base_scale = Vec3::ONE;
-
-    // Spawn card sprite at center of screen
-    commands.spawn((
-        Sprite {
-            color: Color::srgb(0.9, 0.9, 0.95),
-            custom_size: Some(Vec2::new(card_width, card_height)),
-            ..default()
-        },
-        Transform::from_xyz(0.0, 0.0, 0.0).with_scale(base_scale),
-        Card {
-            base_scale,
-            target_scale: base_scale,
-            size: Vec2::new(card_width, card_height),
-        },
-        GameEntity,
-    ));
+// Card component that holds the card's data
+#[derive(Component)]
+pub struct Card {
+    pub data: CardData,
+    pub is_hovered: bool,
+    pub target_scale: f32,
+    pub base_size: Vec2,
 }
 
-// Cleanup game entities
-pub fn cleanup_game(mut commands: Commands, game_entities: Query<Entity, With<GameEntity>>) {
+impl Card {
+    pub fn new(data: CardData, base_size: Vec2) -> Self {
+        Self {
+            data,
+            is_hovered: false,
+            target_scale: 1.0,
+            base_size,
+        }
+    }
+}
+
+// Component to mark the text child of a card
+#[derive(Component)]
+pub struct CardText;
+
+// Setup gameplay (spawn initial card)
+pub fn setup_gameplay(mut commands: Commands) {
+    // Create a sample card
+    let card_data = CardData::new("Sample Card");
+    let card_size = Vec2::new(200.0, 300.0);
+    
+    // Spawn the card entity as a sprite with children
+    commands.spawn((
+        Card::new(card_data.clone(), card_size),
+        Sprite {
+            color: Color::srgb(0.95, 0.95, 0.98),  // White card background
+            custom_size: Some(card_size),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        GameEntity,
+    ))
+    .with_children(|parent| {
+        // Card border as a slightly larger sprite behind the card
+        parent.spawn((
+            Sprite {
+                color: Color::srgb(0.3, 0.3, 0.4),  // Border color
+                custom_size: Some(card_size + Vec2::splat(6.0)),  // 3px border on each side
+                ..default()
+            },
+            Transform::from_xyz(0.0, 0.0, -0.1),  // Slightly behind
+        ));
+        
+        // Card text
+        parent.spawn((
+            Text2d::new(&card_data.name),
+            TextFont {
+                font_size: 28.0,
+                ..default()
+            },
+            TextColor(Color::srgb(0.1, 0.1, 0.15)),  // Dark text
+            Transform::from_xyz(0.0, 0.0, 0.1),  // In front of card
+            CardText,
+        ));
+    });
+}
+
+// Cleanup gameplay entities
+pub fn cleanup_gameplay(mut commands: Commands, game_entities: Query<Entity, With<GameEntity>>) {
     for entity in game_entities.iter() {
         commands.entity(entity).despawn();
     }
 }
 
-// System to detect if mouse is hovering over the card
-pub fn detect_card_hover(
-    mut cards: Query<(&mut Card, &Transform)>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
-    config: Res<CardConfig>,
+// System to detect card hover (using mouse position and sprite bounds)
+pub fn card_hover_system(
+    mut card_query: Query<(&mut Card, &Transform, &Sprite, &Children)>,
+    mut sprite_query: Query<&mut Sprite, Without<Card>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    card_config: Res<CardConfig>,
 ) {
-    let Ok(window) = windows.single() else {
+    let Some(window) = window_query.iter().next() else {
         return;
     };
-    let Ok((camera, camera_transform)) = camera.single() else {
+    
+    let Some((camera, camera_transform)) = camera_query.iter().next() else {
         return;
     };
-
-    if let Some(cursor_position) = window.cursor_position() {
-        // Convert cursor position to world coordinates
-        if let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) {
-            for (mut card, transform) in cards.iter_mut() {
-                let card_position = transform.translation.truncate();
-                let scaled_size = card.size * transform.scale.truncate();
-
-                // Check if cursor is within card bounds
-                let half_size = scaled_size / 2.0;
-                let is_hovering = world_position.x >= card_position.x - half_size.x
-                    && world_position.x <= card_position.x + half_size.x
-                    && world_position.y >= card_position.y - half_size.y
-                    && world_position.y <= card_position.y + half_size.y;
-
-                // Update target scale based on hover state
-                if is_hovering {
-                    card.target_scale = card.base_scale * config.hover_scale;
-                } else {
-                    card.target_scale = card.base_scale;
+    
+    // Get cursor position in world space
+    let cursor_world_pos: Option<Vec2> = window.cursor_position()
+        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok());
+    
+    for (mut card, transform, sprite, children) in card_query.iter_mut() {
+        let is_hovered = if let (Some(cursor_pos), Some(size)) = (cursor_world_pos, sprite.custom_size) {
+            let card_pos = transform.translation.truncate();
+            let half_size = size * transform.scale.truncate() / 2.0;
+            
+            cursor_pos.x >= card_pos.x - half_size.x &&
+            cursor_pos.x <= card_pos.x + half_size.x &&
+            cursor_pos.y >= card_pos.y - half_size.y &&
+            cursor_pos.y <= card_pos.y + half_size.y
+        } else {
+            false
+        };
+        
+        if is_hovered != card.is_hovered {
+            card.is_hovered = is_hovered;
+            card.target_scale = if is_hovered {
+                card_config.hover_scale
+            } else {
+                1.0
+            };
+            
+            // Update border color (first child is the border)
+            if let Some(&border_entity) = children.get(0) {
+                if let Ok(mut border_sprite) = sprite_query.get_mut(border_entity) {
+                    border_sprite.color = if is_hovered {
+                        Color::srgb(0.4, 0.6, 0.9)  // Blue highlight
+                    } else {
+                        Color::srgb(0.3, 0.3, 0.4)  // Normal border
+                    };
                 }
             }
-        }
-    } else {
-        // If cursor is not in window, reset to base scale
-        for (mut card, _) in cards.iter_mut() {
-            card.target_scale = card.base_scale;
         }
     }
 }
 
-// System to smoothly animate card scale
-pub fn animate_card_scale(
-    mut cards: Query<(&Card, &mut Transform)>,
+// System to animate card scale
+pub fn card_animation_system(
+    mut card_query: Query<(&Card, &mut Transform)>,
+    card_config: Res<CardConfig>,
     time: Res<Time>,
-    config: Res<CardConfig>,
 ) {
-    for (card, mut transform) in cards.iter_mut() {
-        // Smoothly interpolate current scale towards target scale
-        transform.scale = transform.scale.lerp(
-            card.target_scale,
-            time.delta_secs() * config.animation_speed,
-        );
+    for (card, mut transform) in card_query.iter_mut() {
+        let current_scale = transform.scale.x;
+        let scale_diff = card.target_scale - current_scale;
+        
+        // Smoothly interpolate to target scale
+        if scale_diff.abs() > 0.001 {
+            let new_scale = current_scale + scale_diff * card_config.animation_speed * time.delta_secs();
+            transform.scale = Vec3::splat(new_scale);
+        } else {
+            transform.scale = Vec3::splat(card.target_scale);
+        }
     }
 }
