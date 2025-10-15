@@ -8,8 +8,10 @@ pub fn init_gameplay_systems(app: &mut App) {
         .add_systems(
             Update,
             (
-                card_hover_system,
-                card_animation_system,
+                hand_layout_system,        // Layout first (position, rotation)
+                card_hover_system,         // Detect hover
+                card_animation_system,     // Animate scale and z-position last
+                deck_click_system,
             )
             .run_if(in_state(GameState::Playing)),
         );
@@ -43,44 +45,69 @@ impl Card {
 #[derive(Component)]
 pub struct CardText;
 
-// Setup gameplay (spawn initial card)
+// Component to mark cards that are in the player's hand
+#[derive(Component)]
+pub struct InHand {
+    pub hand_index: usize,
+}
+
+// Component to mark the deck entity
+#[derive(Component)]
+pub struct Deck;
+
+// Component to mark the empty deck placeholder
+#[derive(Component)]
+pub struct DeckEmpty;
+
+// Resource to track remaining cards in deck
+#[derive(Resource)]
+pub struct DeckCards {
+    pub cards: Vec<CardData>,
+}
+
+// Setup gameplay (spawn deck and initialize hand)
 pub fn setup_gameplay(mut commands: Commands) {
-    // Create a sample card
-    let card_data = CardData::new("Sample Card");
     let card_size = Vec2::new(200.0, 300.0);
     
-    // Spawn the card entity as a sprite with children
+    // Initialize deck with 10 cards
+    let mut deck_cards = Vec::new();
+    for i in 1..=10 {
+        deck_cards.push(CardData::new(format!("Card {}", i)));
+    }
+    commands.insert_resource(DeckCards { cards: deck_cards });
+    
+    // Spawn deck visual at top-right of screen (offset from edge)
+    let deck_pos = Vec3::new(450.0, 250.0, 0.0);
     commands.spawn((
-        Card::new(card_data.clone(), card_size),
+        Deck,
         Sprite {
-            color: Color::srgb(0.95, 0.95, 0.98),  // White card background
+            color: Color::srgb(0.8, 0.75, 0.7),  // Card back color
             custom_size: Some(card_size),
             ..default()
         },
-        Transform::from_xyz(0.0, 0.0, 0.0),
+        Transform::from_xyz(deck_pos.x, deck_pos.y, 0.0),
         GameEntity,
     ))
     .with_children(|parent| {
-        // Card border as a slightly larger sprite behind the card
+        // Deck border
         parent.spawn((
             Sprite {
-                color: Color::srgb(0.3, 0.3, 0.4),  // Border color
-                custom_size: Some(card_size + Vec2::splat(6.0)),  // 3px border on each side
+                color: Color::srgb(0.5, 0.4, 0.35),  // Border color
+                custom_size: Some(card_size + Vec2::splat(6.0)),
                 ..default()
             },
-            Transform::from_xyz(0.0, 0.0, -0.1),  // Slightly behind
+            Transform::from_xyz(0.0, 0.0, -0.1),
         ));
         
-        // Card text
+        // Deck text
         parent.spawn((
-            Text2d::new(&card_data.name),
+            Text2d::new("DECK"),
             TextFont {
-                font_size: 28.0,
+                font_size: 36.0,
                 ..default()
             },
-            TextColor(Color::srgb(0.1, 0.1, 0.15)),  // Dark text
-            Transform::from_xyz(0.0, 0.0, 0.1),  // In front of card
-            CardText,
+            TextColor(Color::srgb(0.2, 0.2, 0.2)),
+            Transform::from_xyz(0.0, 0.0, 0.1),
         ));
     });
 }
@@ -93,8 +120,9 @@ pub fn cleanup_gameplay(mut commands: Commands, game_entities: Query<Entity, Wit
 }
 
 // System to detect card hover (using mouse position and sprite bounds)
+// Only allows hovering the topmost card under the cursor
 pub fn card_hover_system(
-    mut card_query: Query<(&mut Card, &Transform, &Sprite, &Children)>,
+    mut card_query: Query<(Entity, &mut Card, &Transform, &Sprite, &Children)>,
     mut sprite_query: Query<&mut Sprite, Without<Card>>,
     window_query: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
@@ -112,22 +140,37 @@ pub fn card_hover_system(
     let cursor_world_pos: Option<Vec2> = window.cursor_position()
         .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok());
     
-    for (mut card, transform, sprite, children) in card_query.iter_mut() {
-        let is_hovered = if let (Some(cursor_pos), Some(size)) = (cursor_world_pos, sprite.custom_size) {
-            let card_pos = transform.translation.truncate();
-            let half_size = size * transform.scale.truncate() / 2.0;
-            
-            cursor_pos.x >= card_pos.x - half_size.x &&
-            cursor_pos.x <= card_pos.x + half_size.x &&
-            cursor_pos.y >= card_pos.y - half_size.y &&
-            cursor_pos.y <= card_pos.y + half_size.y
-        } else {
-            false
-        };
+    // Find the topmost card under the cursor
+    let mut topmost_card: Option<(Entity, f32)> = None;
+    
+    if let Some(cursor_pos) = cursor_world_pos {
+        for (entity, _card, transform, sprite, _children) in card_query.iter() {
+            if let Some(size) = sprite.custom_size {
+                let card_pos = transform.translation.truncate();
+                let half_size = size * transform.scale.truncate() / 2.0;
+                
+                let is_under_cursor = cursor_pos.x >= card_pos.x - half_size.x &&
+                    cursor_pos.x <= card_pos.x + half_size.x &&
+                    cursor_pos.y >= card_pos.y - half_size.y &&
+                    cursor_pos.y <= card_pos.y + half_size.y;
+                
+                if is_under_cursor {
+                    let z = transform.translation.z;
+                    if topmost_card.is_none() || z > topmost_card.unwrap().1 {
+                        topmost_card = Some((entity, z));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Update hover state for all cards
+    for (entity, mut card, _transform, _sprite, children) in card_query.iter_mut() {
+        let should_hover = topmost_card.map(|(e, _)| e == entity).unwrap_or(false);
         
-        if is_hovered != card.is_hovered {
-            card.is_hovered = is_hovered;
-            card.target_scale = if is_hovered {
+        if should_hover != card.is_hovered {
+            card.is_hovered = should_hover;
+            card.target_scale = if should_hover {
                 card_config.hover_scale
             } else {
                 1.0
@@ -136,7 +179,7 @@ pub fn card_hover_system(
             // Update border color (first child is the border)
             if let Some(&border_entity) = children.get(0) {
                 if let Ok(mut border_sprite) = sprite_query.get_mut(border_entity) {
-                    border_sprite.color = if is_hovered {
+                    border_sprite.color = if should_hover {
                         Color::srgb(0.4, 0.6, 0.9)  // Blue highlight
                     } else {
                         Color::srgb(0.3, 0.3, 0.4)  // Normal border
@@ -147,13 +190,16 @@ pub fn card_hover_system(
     }
 }
 
-// System to animate card scale
+// System to animate card scale and z-position
 pub fn card_animation_system(
-    mut card_query: Query<(&Card, &mut Transform)>,
+    mut card_query: Query<(&Card, &mut Transform, Option<&InHand>)>,
     card_config: Res<CardConfig>,
     time: Res<Time>,
+    hand_query: Query<&InHand>,
 ) {
-    for (card, mut transform) in card_query.iter_mut() {
+    let hand_count = hand_query.iter().count();
+    
+    for (card, mut transform, in_hand) in card_query.iter_mut() {
         let current_scale = transform.scale.x;
         let scale_diff = card.target_scale - current_scale;
         
@@ -164,5 +210,224 @@ pub fn card_animation_system(
         } else {
             transform.scale = Vec3::splat(card.target_scale);
         }
+        
+        // Update z-position based on hover state for cards in hand
+        if let Some(in_hand) = in_hand {
+            // Base z is higher for cards on the left (lower index)
+            // Use 10.0 increments to ensure clear separation
+            let base_z = (hand_count - in_hand.hand_index) as f32 * 10.0;
+            // Hovered cards get +100 to be clearly in front
+            let target_z = if card.is_hovered {
+                base_z + 100.0
+            } else {
+                base_z
+            };
+            
+            // Set z-position instantly (no smooth interpolation)
+            transform.translation.z = target_z;
+        }
+    }
+}
+
+// System to handle clicking on the deck to draw cards
+pub fn deck_click_system(
+    mut commands: Commands,
+    deck_query: Query<(Entity, &Transform, &Sprite, &Children), With<Deck>>,
+    mut deck_cards: ResMut<DeckCards>,
+    hand_query: Query<&InHand>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    if !mouse_button.just_pressed(MouseButton::Left) {
+        return;
+    }
+    
+    let Some(window) = window_query.iter().next() else {
+        return;
+    };
+    
+    let Some((camera, camera_transform)) = camera_query.iter().next() else {
+        return;
+    };
+    
+    // Get cursor position in world space
+    let Some(cursor_world_pos) = window.cursor_position()
+        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok()) else {
+        return;
+    };
+    
+    // Check if deck was clicked
+    if let Ok((deck_entity, deck_transform, deck_sprite, deck_children)) = deck_query.single() {
+        let Some(deck_size) = deck_sprite.custom_size else {
+            return;
+        };
+        
+        let deck_pos = deck_transform.translation.truncate();
+        let half_size = deck_size / 2.0;
+        
+        let clicked_deck = cursor_world_pos.x >= deck_pos.x - half_size.x &&
+                          cursor_world_pos.x <= deck_pos.x + half_size.x &&
+                          cursor_world_pos.y >= deck_pos.y - half_size.y &&
+                          cursor_world_pos.y <= deck_pos.y + half_size.y;
+        
+        if clicked_deck && !deck_cards.cards.is_empty() {
+            // Draw a card from the deck
+            let card_data = deck_cards.cards.remove(0);
+            let card_size = Vec2::new(200.0, 300.0);
+            let hand_index = hand_query.iter().count();
+            let hand_count = hand_index + 1;
+            
+            // Calculate z position: cards on the left (lower index) should be in front
+            // Use larger z increments (10.0 instead of 0.1) to ensure proper layering
+            let z = (hand_count - hand_index) as f32 * 10.0;
+            
+            // Generate a random color for the card
+            use rand::Rng;
+            #[allow(deprecated)]
+            let mut rng = rand::thread_rng();
+            #[allow(deprecated)]
+            let card_color = Color::srgb(
+                rng.gen_range(0.5..1.0),
+                rng.gen_range(0.5..1.0),
+                rng.gen_range(0.5..1.0),
+            );
+            
+            // Spawn the new card
+            commands.spawn((
+                Card::new(card_data.clone(), card_size),
+                InHand { hand_index },
+                Sprite {
+                    color: card_color,
+                    custom_size: Some(card_size),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, -250.0, z),
+                GameEntity,
+            ))
+            .with_children(|parent| {
+                // Card border (behind the card)
+                parent.spawn((
+                    Sprite {
+                        color: Color::srgb(0.3, 0.3, 0.4),
+                        custom_size: Some(card_size + Vec2::splat(6.0)),
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.0, -1.0),
+                ));
+                
+                // Card text (in front of the card but still relative to parent)
+                parent.spawn((
+                    Text2d::new(&card_data.name),
+                    TextFont {
+                        font_size: 28.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.1, 0.1, 0.15)),
+                    Transform::from_xyz(0.0, 0.0, 0.01),
+                    CardText,
+                ));
+            });
+            
+            // If deck is now empty, replace with empty deck placeholder
+            if deck_cards.cards.is_empty() {
+                // Despawn children first
+                for child in deck_children.iter() {
+                    commands.entity(child).despawn();
+                }
+                // Then despawn the deck entity
+                commands.entity(deck_entity).despawn();
+                
+                let deck_pos = deck_transform.translation;
+                let card_size = Vec2::new(200.0, 300.0);
+                
+                // Spawn empty deck placeholder
+                commands.spawn((
+                    DeckEmpty,
+                    Sprite {
+                        color: Color::NONE,  // Transparent background
+                        custom_size: Some(card_size),
+                        ..default()
+                    },
+                    Transform::from_xyz(deck_pos.x, deck_pos.y, 0.0),
+                    GameEntity,
+                ))
+                .with_children(|parent| {
+                    // Dotted border (we'll use a solid border with transparency for now)
+                    parent.spawn((
+                        Sprite {
+                            color: Color::srgba(0.3, 0.3, 0.4, 0.5),  // Semi-transparent border
+                            custom_size: Some(card_size),
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 0.0, -0.05),
+                    ));
+                    
+                    // Inner border to create outline effect
+                    parent.spawn((
+                        Sprite {
+                            color: Color::srgba(0.1, 0.1, 0.15, 0.0),  // Transparent inside
+                            custom_size: Some(card_size - Vec2::splat(10.0)),
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 0.0, -0.04),
+                    ));
+                    
+                    // "deck" text
+                    parent.spawn((
+                        Text2d::new("deck"),
+                        TextFont {
+                            font_size: 32.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.3, 0.3, 0.4, 0.6)),
+                        Transform::from_xyz(0.0, 0.0, 0.1),
+                    ));
+                });
+            }
+        }
+    }
+}
+
+// System to arrange cards in hand in a splayed arc
+pub fn hand_layout_system(
+    mut hand_query: Query<(&InHand, &mut Transform), With<Card>>,
+) {
+    let hand_count = hand_query.iter().count();
+    if hand_count == 0 {
+        return;
+    }
+    
+    // Hand layout parameters
+    let hand_y = -230.0;  // Y position at bottom of screen
+    let card_spacing = 80.0;  // Horizontal spacing between card centers
+    let arc_height = 30.0;  // Height of the arc
+    let rotation_per_card = 0.08;  // Rotation in radians per card from center
+    
+    // Calculate total width and starting position
+    let total_width = (hand_count - 1) as f32 * card_spacing;
+    let start_x = -total_width / 2.0;
+    
+    for (in_hand, mut transform) in hand_query.iter_mut() {
+        let index = in_hand.hand_index;
+        
+        // Calculate position along the arc
+        let x_offset = index as f32 * card_spacing;
+        let x = start_x + x_offset;
+        
+        // Calculate arc (parabolic curve)
+        let center_offset = index as f32 - (hand_count - 1) as f32 / 2.0;
+        let normalized_offset = center_offset / ((hand_count as f32) / 2.0).max(1.0);
+        let y_offset = arc_height * (1.0 - normalized_offset * normalized_offset);
+        let y = hand_y + y_offset;
+        
+        // Calculate rotation (cards fan outward)
+        let rotation = -center_offset * rotation_per_card;
+        
+        // Update transform (x and y position, rotation)
+        // Note: z-position is exclusively managed by card_animation_system
+        transform.translation.x = x;
+        transform.translation.y = y;
+        transform.rotation = Quat::from_rotation_z(rotation);
     }
 }
